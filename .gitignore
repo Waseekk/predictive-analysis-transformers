@@ -1,0 +1,24 @@
+# Archives
+*.zip
+*.7z
+
+# Excel temp lock files
+~$*.xlsx
+
+# Datasets (public source; not tracked in git)
+Dataset_Year_*.xlsx
+
+# Older/superseded output runs
+outputs -first/
+outputs withexplanation/
+
+# Scratch/junk
+nul
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Reference/draft folder (not core pipeline code)
+ifti_vai/

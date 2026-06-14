@@ -1,0 +1,16 @@
+\begin{table}
+\caption{Model Comparison on 2020 Test Set}
+\label{tab:models}
+\begin{tabular}{lrrrrrr}
+\toprule
+Model & ROC-AUC & PR-AUC & F2 & Precision & Recall & Lift@5% \\
+\midrule
+Logistic Regression & 0.7285 & 0.1889 & 0.3079 & 0.1301 & 0.4674 & 6.3327 \\
+LightGBM & 0.7250 & 0.1585 & 0.2675 & 0.1388 & 0.3482 & 5.0916 \\
+SVM (RBF) & 0.7283 & 0.1575 & 0.3033 & 0.1253 & 0.4706 & 5.4098 \\
+Random Forest & 0.7246 & 0.1469 & 0.2890 & 0.1397 & 0.3943 & 5.0598 \\
+XGBoost & 0.7200 & 0.1142 & 0.2741 & 0.1235 & 0.3943 & 4.2324 \\
+Gradient Boosting & 0.7152 & 0.1082 & 0.2872 & 0.1119 & 0.4722 & 4.2006 \\
+\bottomrule
+\end{tabular}
+\end{table}

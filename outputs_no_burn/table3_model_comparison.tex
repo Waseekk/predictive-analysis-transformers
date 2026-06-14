@@ -1,0 +1,16 @@
+\begin{table}
+\caption{Model Comparison (NO Burn Rate)}
+\label{tab:models_noburn}
+\begin{tabular}{lrrrrrr}
+\toprule
+Model & ROC-AUC & PR-AUC & F2 & Precision & Recall & Lift@5% \\
+\midrule
+Logistic Regression & 0.7268 & 0.1531 & 0.2823 & 0.0972 & 0.5390 & 5.6962 \\
+SVM (RBF) & 0.7254 & 0.1404 & 0.2942 & 0.1117 & 0.4976 & 5.1234 \\
+XGBoost & 0.7311 & 0.1329 & 0.2902 & 0.1351 & 0.4070 & 4.9007 \\
+Random Forest & 0.7321 & 0.1288 & 0.3021 & 0.1410 & 0.4229 & 5.2825 \\
+LightGBM & 0.7281 & 0.1143 & 0.2737 & 0.1225 & 0.3959 & 4.4870 \\
+Gradient Boosting & 0.7060 & 0.0951 & 0.2679 & 0.1180 & 0.3927 & 3.6596 \\
+\bottomrule
+\end{tabular}
+\end{table}
