@@ -15,6 +15,9 @@ outputs withexplanation/
 # Scratch/junk
 nul
 
+# Personal notes (not for repo)
+PIPELINE_EXPLAINER.md
+
 # Python
 __pycache__/
 *.pyc
