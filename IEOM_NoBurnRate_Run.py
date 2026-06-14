@@ -545,61 +545,254 @@ for feat, imp in sorted_importance[:15]:
 print("  Figures 9-10 saved.")
 
 # ============================================================================
-# Section 10: Economic Risk
+# Section 10: Economic Risk Framework (VoLL-based NPV/EPV with Discounting)
 # ============================================================================
-print("\n[10/12] Economic risk framework...")
-COST_BASE_COP = 560_000; COST_INSPECTION_COP = 50_000
-power_2020 = df_2020[POWER_COL].values
-median_power = np.median(power_2020[power_2020 > 0])
-replacement_cost = COST_BASE_COP * (power_2020 / median_power).clip(0.5, 5.0)
+print("\n[10/12] Economic risk framework (NPV/EPV with discounting)...")
 
+# Economic parameters. Inspection cost covers the visit plus any preventive action.
+# VoLL (Value of Lost Load) converts EENS kWh outage exposure into monetary loss.
+INSPECTION_COST_COP  = 300_000   # COP per transformer inspected + treated
+REPLACEMENT_BASE_COP = 1_800_000 # base replacement cost at median power rating
+VOLL_COP_PER_KWH     = 5_000     # Value of Lost Load (COP per kWh of EENS)
+CREW_COST_COP        = 150_000   # fixed emergency crew dispatch cost per failure
+DISCOUNT_RATE        = 0.08      # annual discount rate
+PLANNING_HORIZON     = 5         # years over which EPV is accumulated
+EFFECTIVENESS        = 0.85      # probability that a preventive inspection averts failure
+
+# Annuity factor converts one-year failure cost into present value over T years.
+# Formula: sum_{t=1}^{T} 1/(1+r)^t = (1 - (1+r)^-T) / r
+annuity_factor = (1 - (1 + DISCOUNT_RATE) ** (-PLANNING_HORIZON)) / DISCOUNT_RATE
+print(f"  Annuity factor (r={DISCOUNT_RATE}, T={PLANNING_HORIZON} yrs): {annuity_factor:.4f}")
+
+# Per-transformer consequence cost: replacement + outage exposure + crew
+power_2020   = df_2020[POWER_COL].values
+eens_2020    = df_2020[EENS_COL].fillna(0).clip(lower=0).values
+median_power = np.median(power_2020[power_2020 > 0])
+replacement_cost = REPLACEMENT_BASE_COP * (power_2020 / median_power).clip(0.5, 5.0)
+outage_cost      = eens_2020 * VOLL_COP_PER_KWH
+consequence_cost = replacement_cost + outage_cost + CREW_COST_COP
+
+# Expected Present Value (EPV) per transformer over the planning horizon
 best_cal_model = calibrated_models[best_model_name]
 p_fail = best_cal_model.predict_proba(X_test_pp)[:, 1]
-expected_loss = p_fail * replacement_cost
+epv = p_fail * consequence_cost * annuity_factor
 
 risk_df = pd.DataFrame({
-    'Transformer_ID': range(1, len(df_2020)+1), 'P_failure': p_fail,
-    'Power_kVA': power_2020, 'Replacement_Cost_COP': replacement_cost,
-    'Expected_Loss_COP': expected_loss, 'Actual_Burned': y_2020.values,
-}).sort_values('Expected_Loss_COP', ascending=False).reset_index(drop=True)
+    'Transformer_ID':       range(1, len(df_2020) + 1),
+    'P_failure':            p_fail,
+    'Power_kVA':            power_2020,
+    'EENS_kWh':             eens_2020,
+    'Replacement_Cost_COP': replacement_cost,
+    'Consequence_Cost_COP': consequence_cost,
+    'EPV_COP':              epv,
+    'Actual_Burned':        y_2020.values,
+})
 
-print("\n  TOP 10 HIGHEST-RISK TRANSFORMERS:")
-top10 = risk_df.head(10).copy(); top10['Rank'] = range(1, 11)
+print("\n  TOP 10 HIGHEST-EPV TRANSFORMERS:")
+top10 = risk_df.sort_values('EPV_COP', ascending=False).head(10).copy()
+top10['Rank'] = range(1, 11)
 top10['Actual'] = top10['Actual_Burned'].map({0: 'No', 1: 'YES'})
-print(top10[['Rank','Transformer_ID','P_failure','Power_kVA','Expected_Loss_COP','Actual']].to_string(index=False, float_format='{:.4f}'.format))
+print(top10[['Rank', 'Transformer_ID', 'P_failure', 'Power_kVA', 'EPV_COP', 'Actual']].to_string(
+    index=False, float_format='{:.4f}'.format))
 
-# Fig 11: Cost-benefit
-n_total = len(risk_df); sorted_risk = risk_df
-n_insp = np.arange(0, n_total+1)
-cum_fail = np.zeros(n_total+1); cum_loss = np.zeros(n_total+1); cum_cost = np.zeros(n_total+1)
-for i in range(n_total):
-    row = sorted_risk.iloc[i]
-    cum_fail[i+1] = cum_fail[i] + row['Actual_Burned']
-    cum_loss[i+1] = cum_loss[i] + (row['Replacement_Cost_COP'] if row['Actual_Burned']==1 else 0)
-    cum_cost[i+1] = (i+1) * COST_INSPECTION_COP
+n_total      = len(risk_df)
 total_failures = int(y_2020.sum())
-pct_found = cum_fail / total_failures * 100
-net_benefit = cum_loss - cum_cost
 
-fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
-ax1 = axes[0]
-ax1.plot(n_insp/n_total*100, pct_found, 'b-', linewidth=2, label='Model (no burn rate)')
-ax1.plot([0,100],[0,100], 'k--', alpha=0.5, label='Random')
-ax1.set_xlabel('Inspected (%)'); ax1.set_ylabel('Failures Found (%)'); ax1.set_title('Cumulative Gain', fontweight='bold')
-ax1.legend(fontsize=8); ax1.set_xlim([0, 30])
-ax2 = axes[1]
-ax2.plot(n_insp, net_benefit/1e6, 'g-', linewidth=2)
-opt_idx = np.argmax(net_benefit)
-ax2.axvline(x=opt_idx, color='red', linestyle='--', alpha=0.7, label=f'Optimal: {opt_idx}')
-ax2.scatter([opt_idx], [net_benefit[opt_idx]/1e6], color='red', s=100, zorder=5)
-ax2.set_xlabel('Inspections'); ax2.set_ylabel('Net Benefit (M COP)'); ax2.set_title('Net Economic Benefit', fontweight='bold')
-ax2.legend(fontsize=9)
-fig.suptitle('Figure 11: Cost-Benefit (NO Burn Rate)', fontweight='bold', y=1.02)
-plt.tight_layout(); fig.savefig(OUTPUT_DIR / "fig11_cost_benefit.png", dpi=300, bbox_inches='tight'); plt.close()
-print(f"\n  Optimal inspections: {opt_idx:,}")
-print(f"  Max net benefit: {net_benefit[opt_idx]:,.0f} COP ({net_benefit[opt_idx]/1e6:.1f}M)")
-print(f"  Failures caught: {int(cum_fail[opt_idx])}/{total_failures} ({pct_found[opt_idx]:.1f}%)")
-print("  Figure 11 saved.")
+# ---- NPV optimization: rank by EPV and find k* ----------------------------
+# For a uniform inspection cost, ranking by EPV is identical to ranking by NPV.
+epv_sorted = risk_df.sort_values('EPV_COP', ascending=False)['EPV_COP'].values
+
+cum_avoided_epv  = np.cumsum(epv_sorted * EFFECTIVENESS)
+cum_program_cost = np.arange(1, n_total + 1) * INSPECTION_COST_COP
+cum_npv          = cum_avoided_epv - cum_program_cost
+
+# Prepend k=0 (zero inspections, zero NPV)
+cum_npv_full          = np.concatenate([[0], cum_npv])
+cum_avoided_epv_full  = np.concatenate([[0], cum_avoided_epv])
+k_star  = int(np.argmax(cum_npv_full))
+npv_star = float(cum_npv_full[k_star])
+
+print(f"\n  Optimal inspection count: k* = {k_star:,}")
+print(f"  Maximum NPV:  {npv_star:,.0f} COP  ({npv_star / 1e6:.2f} M COP)")
+print(f"  Program cost at k*: {k_star * INSPECTION_COST_COP:,.0f} COP")
+
+# Fig 11: Cumulative NPV vs number of inspections (paper Fig 8)
+fig, ax = plt.subplots(figsize=(9, 5))
+ax.plot(range(n_total + 1), cum_npv_full / 1e6, 'b-', linewidth=1.5, label='Cumulative NPV')
+ax.axvline(x=k_star, color='red', linestyle='--', linewidth=1.5, label=f'k* = {k_star:,}')
+ax.scatter([k_star], [npv_star / 1e6], color='red', s=80, zorder=5)
+ax.axhline(y=0, color='gray', linestyle=':', linewidth=1)
+ax.set_xlabel('Number of Inspections (k)')
+ax.set_ylabel('Cumulative NPV (M COP)')
+ax.set_title('Figure 8: Cumulative NPV vs Number of Inspections', fontweight='bold')
+ax.legend()
+plt.tight_layout()
+fig.savefig(OUTPUT_DIR / "fig11_npv_curve.png", dpi=300, bbox_inches='tight')
+plt.close()
+print("  Figure 8 (NPV curve) saved as fig11_npv_curve.png")
+
+# Fig 12: Cumulative avoided EPV vs number of inspections (paper Fig 9)
+fig, ax = plt.subplots(figsize=(9, 5))
+ax.plot(range(n_total + 1), cum_avoided_epv_full / 1e6, 'g-', linewidth=1.5,
+        label='Cumulative Avoided EPV (NPV-ranked)')
+ax.axvline(x=k_star, color='red', linestyle='--', linewidth=1.5, label=f'k* = {k_star:,}')
+ax.set_xlabel('Number of Inspections (k)')
+ax.set_ylabel('Cumulative Avoided EPV (M COP)')
+ax.set_title('Figure 9: Cumulative Avoided EPV vs Number of Inspections', fontweight='bold')
+ax.legend()
+plt.tight_layout()
+fig.savefig(OUTPUT_DIR / "fig12_avoided_epv.png", dpi=300, bbox_inches='tight')
+plt.close()
+print("  Figure 9 (avoided EPV) saved as fig12_avoided_epv.png")
+
+# ---- Table 4: inspection policy comparison at k = k* ----------------------
+def compute_policy_metrics(mask, epv_arr, eens_arr, actual_arr, effectiveness, insp_cost):
+    k           = int(mask.sum())
+    program_cost = k * insp_cost
+    avoided_epv  = effectiveness * float(epv_arr[mask].sum())
+    npv          = avoided_epv - program_cost
+    roi          = npv / program_cost if program_cost > 0 else 0.0
+    failures_det = int(actual_arr[mask].sum())
+    recall       = failures_det / int(actual_arr.sum()) if actual_arr.sum() > 0 else 0.0
+    # EENS prevented = actual EENS of transformers that were inspected AND actually burned
+    eens_prev    = float(eens_arr[mask][actual_arr[mask] == 1].sum())
+    cost_per_fail = program_cost / failures_det if failures_det > 0 else np.inf
+    return {
+        'k': k, 'NPV_COP': npv, 'ROI': roi, 'Avoided_EPV_COP': avoided_epv,
+        'Program_Cost_COP': program_cost, 'Failures_Detected': failures_det,
+        'Recall': recall, 'EENS_Prevented_kWh': eens_prev,
+        'Cost_per_Avoided_Failure_COP': cost_per_fail,
+    }
+
+epv_all    = risk_df['EPV_COP'].values
+eens_all   = risk_df['EENS_kWh'].values
+actual_all = risk_df['Actual_Burned'].values
+
+mask_npv  = np.zeros(n_total, dtype=bool)
+mask_npv[np.argsort(epv_all)[::-1][:k_star]] = True
+
+mask_prob = np.zeros(n_total, dtype=bool)
+mask_prob[np.argsort(p_fail)[::-1][:k_star]] = True
+
+rng_policy = np.random.RandomState(SEED)
+mask_rand  = np.zeros(n_total, dtype=bool)
+mask_rand[rng_policy.choice(n_total, k_star, replace=False)] = True
+
+mask_all   = np.ones(n_total, dtype=bool)
+
+policy_rows = []
+for label, mask in [
+    ('Top-k by NPV',         mask_npv),
+    ('Top-k by probability', mask_prob),
+    ('Random k',             mask_rand),
+    ('Inspect all',          mask_all),
+]:
+    row = compute_policy_metrics(mask, epv_all, eens_all, actual_all, EFFECTIVENESS, INSPECTION_COST_COP)
+    row['Inspection_Policy'] = label
+    policy_rows.append(row)
+
+table4_policy = pd.DataFrame(policy_rows, columns=[
+    'Inspection_Policy', 'k', 'NPV_COP', 'ROI', 'Avoided_EPV_COP',
+    'Program_Cost_COP', 'Failures_Detected', 'Recall',
+    'EENS_Prevented_kWh', 'Cost_per_Avoided_Failure_COP',
+])
+print("\n  TABLE 4: Inspection Policy Comparison (k = k*)")
+print("  " + "=" * 110)
+print(table4_policy.to_string(index=False, float_format='{:.4f}'.format))
+
+# ---- Monte Carlo: vary VoLL, effectiveness, discount rate ------------------
+print("\n  Running Monte Carlo simulation (N=1,000)...")
+N_MC = 1000
+rng_mc = np.random.RandomState(SEED + 1)
+mc_records = []
+
+for _ in range(N_MC):
+    mc_voll    = rng_mc.uniform(3_000,  8_000)
+    mc_eff     = rng_mc.uniform(0.70,   1.00)
+    mc_r       = rng_mc.uniform(0.05,   0.12)
+    mc_annuity = (1 - (1 + mc_r) ** (-PLANNING_HORIZON)) / mc_r
+    mc_epv     = p_fail * (replacement_cost + eens_2020 * mc_voll + CREW_COST_COP) * mc_annuity
+    mc_cum     = np.concatenate([[0],
+                    np.cumsum(np.sort(mc_epv)[::-1] * mc_eff)
+                    - np.arange(1, n_total + 1) * INSPECTION_COST_COP])
+    mc_k       = int(np.argmax(mc_cum))
+    mc_records.append({'VoLL': mc_voll, 'Effectiveness': mc_eff, 'DiscountRate': mc_r,
+                        'k_star': mc_k, 'NPV_star': float(mc_cum[mc_k])})
+
+mc_df = pd.DataFrame(mc_records)
+print(f"  k* distribution: mean={mc_df['k_star'].mean():.0f}, "
+      f"median={mc_df['k_star'].median():.0f}, "
+      f"95% CI [{mc_df['k_star'].quantile(0.025):.0f}, {mc_df['k_star'].quantile(0.975):.0f}]")
+print(f"  NPV* distribution: mean={mc_df['NPV_star'].mean()/1e6:.2f} M, "
+      f"median={mc_df['NPV_star'].median()/1e6:.2f} M COP")
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+axes[0].hist(mc_df['k_star'], bins=30, color='steelblue', edgecolor='black', linewidth=0.5)
+axes[0].axvline(k_star, color='red', linestyle='--', linewidth=1.5, label=f'Base k* = {k_star:,}')
+axes[0].set_xlabel('Optimal Inspection Count (k*)')
+axes[0].set_ylabel('Frequency')
+axes[0].set_title('Distribution of k* across 1,000 simulations', fontweight='bold')
+axes[0].legend()
+
+axes[1].hist(mc_df['NPV_star'] / 1e6, bins=30, color='seagreen', edgecolor='black', linewidth=0.5)
+axes[1].axvline(npv_star / 1e6, color='red', linestyle='--', linewidth=1.5,
+                label=f'Base NPV* = {npv_star/1e6:.1f} M COP')
+axes[1].set_xlabel('Maximum NPV* (M COP)')
+axes[1].set_ylabel('Frequency')
+axes[1].set_title('Distribution of maximum NPV across 1,000 simulations', fontweight='bold')
+axes[1].legend()
+
+fig.suptitle('Monte Carlo Simulation (N=1,000): varying VoLL, effectiveness, discount rate',
+             fontweight='bold')
+plt.tight_layout()
+fig.savefig(OUTPUT_DIR / "fig13_monte_carlo.png", dpi=300, bbox_inches='tight')
+plt.close()
+print("  Monte Carlo figure saved as fig13_monte_carlo.png")
+
+# ---- Sensitivity analysis: VoLL and preventive effectiveness ---------------
+voll_range = np.linspace(1_000, 12_000, 60)
+sens_voll = []
+for voll in voll_range:
+    mc_epv = p_fail * (replacement_cost + eens_2020 * voll + CREW_COST_COP) * annuity_factor
+    mc_cum = np.concatenate([[0],
+                np.cumsum(np.sort(mc_epv)[::-1] * EFFECTIVENESS)
+                - np.arange(1, n_total + 1) * INSPECTION_COST_COP])
+    k_opt = int(np.argmax(mc_cum))
+    sens_voll.append({'VoLL': voll, 'k_star': k_opt, 'NPV_star': float(mc_cum[k_opt])})
+sens_voll_df = pd.DataFrame(sens_voll)
+
+eff_range = np.linspace(0.30, 1.00, 60)
+sens_eff = []
+for eff in eff_range:
+    mc_cum = np.concatenate([[0],
+                np.cumsum(np.sort(epv_all)[::-1] * eff)
+                - np.arange(1, n_total + 1) * INSPECTION_COST_COP])
+    k_opt = int(np.argmax(mc_cum))
+    sens_eff.append({'Effectiveness': eff, 'k_star': k_opt, 'NPV_star': float(mc_cum[k_opt])})
+sens_eff_df = pd.DataFrame(sens_eff)
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+for ax, df_s, x_col, x_label, base_val in [
+    (axes[0], sens_voll_df, 'VoLL',         'VoLL (COP/kWh)',          VOLL_COP_PER_KWH),
+    (axes[1], sens_eff_df,  'Effectiveness', 'Preventive Effectiveness', EFFECTIVENESS),
+]:
+    ax2 = ax.twinx()
+    ax.plot(df_s[x_col], df_s['NPV_star'] / 1e6, 'b-', linewidth=2,  label='NPV* (left)')
+    ax2.plot(df_s[x_col], df_s['k_star'],          'r--', linewidth=1.5, label='k* (right)')
+    ax.axvline(base_val, color='gray', linestyle=':', linewidth=1, label='Base value')
+    ax.set_xlabel(x_label)
+    ax.set_ylabel('NPV* (M COP)', color='blue')
+    ax2.set_ylabel('k*', color='red')
+    ax.set_title(f'Sensitivity: {x_label}', fontweight='bold')
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, fontsize=8)
+
+fig.suptitle('Sensitivity Analysis: VoLL and Preventive Effectiveness', fontweight='bold')
+plt.tight_layout()
+fig.savefig(OUTPUT_DIR / "fig14_sensitivity.png", dpi=300, bbox_inches='tight')
+plt.close()
+print("  Sensitivity analysis figure saved as fig14_sensitivity.png")
 
 # ============================================================================
 # Section 11: Bootstrap CIs
@@ -638,8 +831,11 @@ print("\n[12/12] Exporting results...")
 table1.to_csv(OUTPUT_DIR / "table1_dataset_summary.csv", index=False)
 table2.to_csv(OUTPUT_DIR / "table2_smote_comparison.csv", index=False)
 results_df.to_csv(OUTPUT_DIR / "table3_model_comparison.csv", index=False)
-risk_df.head(10).to_csv(OUTPUT_DIR / "table4_top10_risk.csv", index=False)
+risk_df.sort_values('EPV_COP', ascending=False).head(10).to_csv(
+    OUTPUT_DIR / "table4_top10_risk.csv", index=False)
+table4_policy.to_csv(OUTPUT_DIR / "table4_policy_comparison.csv", index=False)
 boot_df.to_csv(OUTPUT_DIR / "table3_bootstrap_CIs.csv", index=False)
+mc_df.to_csv(OUTPUT_DIR / "table5_monte_carlo.csv", index=False)
 
 # LaTeX tables
 with open(OUTPUT_DIR / "table1_dataset_summary.tex", 'w') as f:
@@ -650,6 +846,12 @@ latex_cols = ['Model', 'ROC-AUC', 'PR-AUC', 'F2', 'Precision', 'Recall', 'Lift@5
 with open(OUTPUT_DIR / "table3_model_comparison.tex", 'w') as f:
     f.write(results_df[latex_cols].to_latex(index=False, float_format='%.4f',
             caption="Model Comparison (NO Burn Rate)", label="tab:models_noburn"))
+latex_policy_cols = ['Inspection_Policy', 'k', 'NPV_COP', 'ROI', 'Avoided_EPV_COP',
+                     'Program_Cost_COP', 'Failures_Detected', 'Recall', 'EENS_Prevented_kWh']
+with open(OUTPUT_DIR / "table4_policy_comparison.tex", 'w') as f:
+    f.write(table4_policy[latex_policy_cols].to_latex(
+        index=False, float_format='%.2f',
+        caption="Inspection Policy Comparison at k = k*", label="tab:policy_comparison"))
 
 print("\n  Saved outputs:")
 for f in sorted(OUTPUT_DIR.glob('*')):

@@ -1,0 +1,14 @@
+\begin{table}
+\caption{Inspection Policy Comparison at k = k*}
+\label{tab:policy_comparison}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+Inspection_Policy & k & NPV_COP & ROI & Avoided_EPV_COP & Program_Cost_COP & Failures_Detected & Recall & EENS_Prevented_kWh \\
+\midrule
+Top-k by NPV & 11666 & 5988168858.29 & 1.71 & 9487968858.29 & 3499800000 & 535 & 0.85 & 197129.20 \\
+Top-k by probability & 11666 & 5448772855.47 & 1.56 & 8948572855.47 & 3499800000 & 577 & 0.92 & 183279.10 \\
+Random k & 11666 & 3994591538.35 & 1.14 & 7494391538.35 & 3499800000 & 451 & 0.72 & 164877.48 \\
+Inspect all & 15873 & 5382384522.12 & 1.13 & 10144284522.12 & 4761900000 & 629 & 1.00 & 228385.30 \\
+\bottomrule
+\end{tabular}
+\end{table}
